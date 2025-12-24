@@ -12,7 +12,8 @@ import {
     Mic,
     Settings as SettingsIcon,
     CloudSun,
-    Tag
+    Tag,
+    RefreshCw
 } from 'lucide-react'
 import { agentsApi, type Agent, type CreateAgentData } from '../api/agents'
 import { documentsApi, type Document } from '../api/documents'
@@ -121,6 +122,13 @@ export default function AgentEditor() {
 
     const deleteDocMutation = useMutation({
         mutationFn: documentsApi.delete,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['documents', id] })
+        },
+    })
+
+    const processDocMutation = useMutation({
+        mutationFn: documentsApi.process,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['documents', id] })
         },
@@ -728,13 +736,26 @@ export default function AgentEditor() {
                                         <td>{doc.chunk_count}</td>
                                         <td>{new Date(doc.created_at).toLocaleDateString()}</td>
                                         <td>
-                                            <button
-                                                className="btn btn-icon btn-outline"
-                                                onClick={() => deleteDocMutation.mutate(doc.id)}
-                                                disabled={deleteDocMutation.isPending}
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
+                                            <div style={{ display: 'flex', gap: 4 }}>
+                                                {(doc.status === 'pending' || doc.status === 'failed') && (
+                                                    <button
+                                                        className="btn btn-icon btn-outline"
+                                                        onClick={() => processDocMutation.mutate(doc.id)}
+                                                        disabled={processDocMutation.isPending}
+                                                        title="Process document"
+                                                    >
+                                                        <RefreshCw size={16} className={processDocMutation.isPending ? 'animate-spin' : ''} />
+                                                    </button>
+                                                )}
+                                                <button
+                                                    className="btn btn-icon btn-outline"
+                                                    onClick={() => deleteDocMutation.mutate(doc.id)}
+                                                    disabled={deleteDocMutation.isPending}
+                                                    title="Delete document"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}

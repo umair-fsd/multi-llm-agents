@@ -13,6 +13,7 @@ from livekit.plugins import openai as openai_plugin
 
 from src.tools.web_search import WebSearchTool
 from src.tools.weather import WeatherTool
+from src.tools.rag_retriever import RAGRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class MultiAgentLLM(openai_plugin.LLM):
         self._on_agent_switch_callbacks = []
         self._web_search_tool = None
         self._weather_tool = None
+        self._rag_retrievers: dict[str, RAGRetriever] = {}  # Cache by agent_id
         self._last_tools_used: list[str] = []  # Track tools used in last call
         
         logger.info(f"MultiAgentLLM initialized with {len(agents)} agents (fast routing)")
@@ -292,6 +294,41 @@ class MultiAgentStream(llm.LLMStream):
         
         return None
     
+    async def _execute_rag(self, query: str, capabilities: dict, agent_id: str) -> Optional[str]:
+        """Execute RAG retrieval if enabled for this agent."""
+        rag_config = capabilities.get('rag', {})
+        if not rag_config.get('enabled', False):
+            logger.info(f"📚 RAG not enabled for this agent")
+            return None
+        
+        try:
+            top_k = rag_config.get('top_k', 5)
+            collection_name = f"agent_{agent_id.replace('-', '_')}_docs"
+            logger.info(f"📚 RAG search for: {query[:40]}... (collection: {collection_name})")
+            
+            # Get or create RAG retriever for this agent
+            if agent_id not in self._multi_agent_llm._rag_retrievers:
+                self._multi_agent_llm._rag_retrievers[agent_id] = RAGRetriever(
+                    collection_name=collection_name,
+                    top_k=top_k
+                )
+            
+            retriever = self._multi_agent_llm._rag_retrievers[agent_id]
+            result = await retriever.search(query)
+            logger.info(f"📚 RAG result: {result[:200] if result else 'None'}...")
+            
+            if result and "No documents found" not in result and "No relevant information" not in result and "error" not in result.lower():
+                logger.info(f"✅ RAG retrieved {len(result)} chars")
+                self._multi_agent_llm._last_tools_used.append('rag')
+                return result
+            else:
+                logger.info(f"📚 RAG: No relevant docs found - result was: {result[:100] if result else 'None'}")
+            
+        except Exception as e:
+            logger.error(f"RAG retrieval failed: {e}", exc_info=True)
+        
+        return None
+    
     async def _run(self) -> None:
         """Optimized run with fast routing."""
         try:
@@ -320,24 +357,31 @@ class MultiAgentStream(llm.LLMStream):
                 
                 if old_agent_name and old_agent_name != selected_agent['name']:
                     logger.info(f"🔄 Switched: {old_agent_name} → {selected_agent['name']}")
+                    # Call registered callbacks
+                    for callback in self._multi_agent_llm._on_agent_switch_callbacks:
+                        try:
+                            callback(old_agent_name, selected_agent['name'])
+                        except Exception as e:
+                            logger.error(f"Agent switch callback error: {e}")
                 
                 # Execute tools based on query and agent capabilities
                 tool_results = []
+                capabilities = self._multi_agent_llm._current_agent.capabilities
+                agent_id = self._multi_agent_llm._current_agent.id
                 
-                # Try weather first (more specific)
-                weather_result = await self._execute_weather(
-                    user_message,
-                    self._multi_agent_llm._current_agent.capabilities
-                )
+                # Try RAG first (agent's own documents)
+                rag_result = await self._execute_rag(user_message, capabilities, agent_id)
+                if rag_result:
+                    tool_results.append(rag_result)
+                
+                # Try weather (specific weather queries)
+                weather_result = await self._execute_weather(user_message, capabilities)
                 if weather_result:
                     tool_results.append(weather_result)
                 
-                # Try web search if no weather result
+                # Try web search if no weather result (real-time info)
                 if not weather_result:
-                    search_result = await self._execute_web_search(
-                        user_message,
-                        self._multi_agent_llm._current_agent.capabilities
-                    )
+                    search_result = await self._execute_web_search(user_message, capabilities)
                     if search_result:
                         tool_results.append(search_result)
                 

@@ -120,10 +120,27 @@ async def upload_document(
     )
     
     db.add(document)
-    await db.flush()
+    await db.commit()
     await db.refresh(document)
     
-    # TODO: Trigger async processing task for RAG
+    # Process document for RAG in background
+    import asyncio
+    from src.services.rag_service import rag_service
+    
+    async def process_in_background():
+        """Process document asynchronously."""
+        from src.db.database import async_session_maker
+        async with async_session_maker() as bg_db:
+            try:
+                await rag_service.process_document(
+                    db=bg_db,
+                    document_id=str(document.id),
+                )
+            except Exception as e:
+                print(f"RAG processing error for {document.id}: {e}")
+    
+    # Start background processing
+    asyncio.create_task(process_in_background())
     
     return document_to_response(document)
 

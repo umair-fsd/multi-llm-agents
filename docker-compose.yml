@@ -82,6 +82,8 @@ services:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - LIVEKIT_URL=ws://livekit:7880
+    volumes:
+      - uploads_data:/app/uploads
     ports:
       - "8000:8000"
     depends_on:
@@ -119,6 +121,7 @@ volumes:
   postgres_data:
   qdrant_data:
   redis_data:
+  uploads_data:
 
 networks:
   default:
