@@ -16,13 +16,14 @@ from livekit.agents import (
     AgentSession,
     Agent,
 )
-from livekit.plugins import openai, silero
+from livekit.plugins import openai, silero, deepgram
 
 from src.config import (
     LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET,
     LIVEKIT_URL,
     OPENAI_API_KEY,
+    DEEPGRAM_API_KEY,
 )
 from src.db import agent_db_service
 from src.db.session_history import session_history_service
@@ -100,9 +101,21 @@ async def entrypoint(ctx: JobContext):
             logger.warning("VAD not preloaded, loading now...")
             _vad = silero.VAD.load()
         
-        # Create voice components
-        stt = openai.STT()
-        tts = openai.TTS(voice="alloy")
+        # Create voice components - Use Deepgram for faster STT if available
+        if DEEPGRAM_API_KEY and DEEPGRAM_API_KEY != "your-deepgram-api-key-here":
+            try:
+                stt = deepgram.STT()  # ~300ms vs OpenAI's ~500ms
+                logger.info("Using Deepgram STT (faster)")
+            except Exception as e:
+                logger.warning(f"Deepgram STT failed, falling back to OpenAI: {e}")
+                stt = openai.STT()
+                logger.info("Using OpenAI STT (fallback)")
+        else:
+            stt = openai.STT()
+            logger.info("Using OpenAI STT")
+        
+        # TTS - OpenAI with streaming
+        tts = openai.TTS(voice="alloy")  # alloy is fastest voice
         
         # Create MultiAgentLLM with all agents
         multi_agent_llm = MultiAgentLLM(

@@ -1,6 +1,8 @@
 """RAG retriever tool for document Q&A."""
 
 import logging
+import hashlib
+from functools import lru_cache
 from langchain_openai import OpenAIEmbeddings
 from qdrant_client import AsyncQdrantClient
 
@@ -8,16 +10,19 @@ from src.config import QDRANT_HOST, QDRANT_PORT, OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
 
+# Simple in-memory embedding cache (avoid repeated API calls)
+_embedding_cache: dict[str, list[float]] = {}
+
 
 class RAGRetriever:
     """RAG retrieval tool for querying document collections."""
 
-    def __init__(self, collection_name: str, top_k: int = 5):
+    def __init__(self, collection_name: str, top_k: int = 3):  # Reduced top_k for speed
         self.collection_name = collection_name
         self.top_k = top_k
         self.client = AsyncQdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
         self.embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
-        logger.info(f"📚 RAGRetriever created for collection: {collection_name} (host: {QDRANT_HOST}:{QDRANT_PORT})")
+        logger.info(f"📚 RAGRetriever created for collection: {collection_name}")
 
     async def search(self, query: str) -> str:
         """
@@ -39,9 +44,18 @@ class RAGRetriever:
                 logger.warning(f"📚 Collection '{self.collection_name}' not found!")
                 return f"No documents found in collection: {self.collection_name}"
 
-            # Embed the query
-            logger.info(f"📚 Embedding query: {query[:50]}...")
-            query_vector = await self.embeddings.aembed_query(query)
+            # Embed the query (with caching)
+            cache_key = hashlib.md5(query.encode()).hexdigest()
+            if cache_key in _embedding_cache:
+                query_vector = _embedding_cache[cache_key]
+                logger.info(f"📚 Using cached embedding for query")
+            else:
+                logger.info(f"📚 Embedding query: {query[:50]}...")
+                query_vector = await self.embeddings.aembed_query(query)
+                _embedding_cache[cache_key] = query_vector
+                # Keep cache size manageable
+                if len(_embedding_cache) > 100:
+                    _embedding_cache.pop(next(iter(_embedding_cache)))
 
             # Search for similar chunks using query_points
             from qdrant_client.models import models

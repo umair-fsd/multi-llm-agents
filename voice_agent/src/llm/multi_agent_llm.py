@@ -158,21 +158,19 @@ class MultiAgentLLM(openai_plugin.LLM):
         
         new_ctx = llm.ChatContext()
         
-        # Build the system prompt
+        # Build the system prompt - KEEP IT SHORT for speed
         if tool_context:
-            # When we have tool results, make them the ONLY source for the answer
-            prompt = f"""You are {self._current_agent.name}. Answer in 1-2 sentences only.
+            # Short prompt with tool data
+            prompt = f"""You are {self._current_agent.name}. Answer in 1 sentence.
 
-CRITICAL INSTRUCTION: You MUST use ONLY the information below to answer. This is LIVE DATA from today ({__import__('datetime').date.today()}). DO NOT use your training data. Your training data is OUTDATED.
+USE THIS DATA (today's date: {__import__('datetime').date.today()}):
+{tool_context[:500]}
 
-LIVE DATA:
-{tool_context}
-
-Answer based ONLY on the LIVE DATA above. If it says someone is president, that's the current president. Do not contradict it."""
-            logger.info(f"📝 Added tool context to prompt ({len(tool_context)} chars)")
+Answer from the data above only."""
+            logger.info(f"📝 Tool context added ({len(tool_context)} chars)")
         else:
-            # No tool results - use standard prompt
-            prompt = f"{self._current_agent.name}: {self._current_agent.system_prompt}\n\nBe concise. 1-2 sentences max."
+            # Minimal prompt for speed
+            prompt = f"{self._current_agent.name}: {self._current_agent.system_prompt[:200]}\nBe brief (1 sentence)."
         
         new_ctx.add_message(role="system", content=prompt)
         
@@ -364,26 +362,38 @@ class MultiAgentStream(llm.LLMStream):
                         except Exception as e:
                             logger.error(f"Agent switch callback error: {e}")
                 
-                # Execute tools based on query and agent capabilities
-                tool_results = []
+                # Execute tools in PARALLEL for speed
+                import asyncio
                 capabilities = self._multi_agent_llm._current_agent.capabilities
                 agent_id = self._multi_agent_llm._current_agent.id
                 
-                # Try RAG first (agent's own documents)
-                rag_result = await self._execute_rag(user_message, capabilities, agent_id)
-                if rag_result:
-                    tool_results.append(rag_result)
+                # Determine which tools to run
+                needs_rag = capabilities.get('rag', {}).get('enabled', False)
+                needs_weather = capabilities.get('weather', {}).get('enabled', False) and self._multi_agent_llm._needs_weather(user_message)
+                needs_search = capabilities.get('web_search', {}).get('enabled', False) and self._multi_agent_llm._needs_web_search(user_message) and not needs_weather
                 
-                # Try weather (specific weather queries)
-                weather_result = await self._execute_weather(user_message, capabilities)
-                if weather_result:
-                    tool_results.append(weather_result)
+                # Run applicable tools in parallel
+                tasks = []
+                task_names = []
                 
-                # Try web search if no weather result (real-time info)
-                if not weather_result:
-                    search_result = await self._execute_web_search(user_message, capabilities)
-                    if search_result:
-                        tool_results.append(search_result)
+                if needs_rag:
+                    tasks.append(self._execute_rag(user_message, capabilities, agent_id))
+                    task_names.append('rag')
+                if needs_weather:
+                    tasks.append(self._execute_weather(user_message, capabilities))
+                    task_names.append('weather')
+                if needs_search:
+                    tasks.append(self._execute_web_search(user_message, capabilities))
+                    task_names.append('search')
+                
+                # Execute all tools concurrently
+                tool_results = []
+                if tasks:
+                    logger.info(f"⚡ Running {len(tasks)} tools in parallel: {task_names}")
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for r in results:
+                        if r and not isinstance(r, Exception):
+                            tool_results.append(r)
                 
                 tool_context = "\n\n".join(tool_results) if tool_results else None
             
