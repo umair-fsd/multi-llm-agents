@@ -1,0 +1,29 @@
+# LiveKit Server Configuration
+# For local development
+
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+
+redis:
+  address: redis:6379
+
+keys:
+  devkey: secret_min_32_chars_for_development
+
+logging:
+  level: info
+  json: false
+
+room:
+  enabled_codecs:
+    - mime: audio/opus
+    - mime: audio/red
+  max_participants: 10
+  empty_timeout: 300
+  departure_timeout: 20
+
+webhook:
+  api_key: devkey

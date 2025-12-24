@@ -1,0 +1,38 @@
+"""Configuration for voice agent service."""
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load environment
+load_dotenv()
+
+# LiveKit Configuration
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "ws://localhost:7880")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret_min_32_chars_for_development")
+
+# LLM Configuration
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
+
+# Speech Services (Deepgram)
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+
+# Web Search
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
+DEFAULT_SEARCH_PROVIDER = os.getenv("DEFAULT_SEARCH_PROVIDER", "duckduckgo")
+
+# Database
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/agentic_ai")
+
+# Qdrant
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+
+# Paths
+PROJECT_ROOT = Path(__file__).parent.parent
