@@ -14,6 +14,12 @@ class WebSearchConfig(BaseModel):
     max_results: int = Field(default=5, ge=1, le=20)
 
 
+class WeatherConfig(BaseModel):
+    """Weather capability configuration."""
+    enabled: bool = False
+    units: Literal["metric", "imperial"] = "metric"  # Celsius or Fahrenheit
+
+
 class RAGConfig(BaseModel):
     """RAG capability configuration."""
     enabled: bool = False
@@ -40,7 +46,9 @@ class VoiceSettings(BaseModel):
 class AgentCapabilities(BaseModel):
     """Agent capabilities configuration."""
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    weather: WeatherConfig = Field(default_factory=WeatherConfig)
     rag: RAGConfig = Field(default_factory=RAGConfig)
+    routing_keywords: list[str] = Field(default_factory=list, description="Keywords to route queries to this agent")
     tools: list[str] = Field(default_factory=list)
 
 

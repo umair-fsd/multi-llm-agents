@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, List
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
@@ -49,7 +49,15 @@ class Message(Base):
     # Audio info (if applicable)
     audio_duration_ms: Mapped[int] = mapped_column(nullable=True)
     
-    # Message metadata (audio duration, tools used, etc)
+    # Tools used for this message (e.g., ['web_search', 'rag'])
+    tools_used: Mapped[List[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    
+    # Message metadata (audio duration, agent name, etc)
     message_metadata: Mapped[dict[str, Any]] = mapped_column(
         JSON,
         nullable=False,

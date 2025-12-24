@@ -124,21 +124,23 @@ Respond with just the agent name, nothing else."""
             
             selected_name = response.choices[0].message.content.strip()
             
+            logger.info(f"🤖 ROUTING: Query='{user_message[:50]}...' → LLM selected: '{selected_name}'")
+            
             # Find matching agent (exact match first)
             for agent in self.agents:
                 if agent['name'].lower() == selected_name.lower():
-                    logger.info(f"Routed to: {agent['name']}")
+                    logger.info(f"✅ AGENT SELECTED: {agent['name']} - will use their specialized prompt")
                     return agent
             
             # Fuzzy match if exact match fails
             for agent in self.agents:
                 if selected_name.lower() in agent['name'].lower() or \
                    agent['name'].lower() in selected_name.lower():
-                    logger.info(f"Fuzzy matched to: {agent['name']}")
+                    logger.info(f"✅ AGENT SELECTED (fuzzy): {agent['name']}")
                     return agent
             
             # Fallback to first agent
-            logger.warning(f"No match for '{selected_name}', using: {self.agents[0]['name']}")
+            logger.warning(f"⚠️ No match for '{selected_name}', falling back to: {self.agents[0]['name']}")
             return self.agents[0]
             
         except Exception as e:

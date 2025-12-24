@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, KeyboardEvent } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -10,7 +10,9 @@ import {
     Globe,
     Bot,
     Mic,
-    Settings as SettingsIcon
+    Settings as SettingsIcon,
+    CloudSun,
+    Tag
 } from 'lucide-react'
 import { agentsApi, type Agent, type CreateAgentData } from '../api/agents'
 import { documentsApi, type Document } from '../api/documents'
@@ -31,6 +33,10 @@ const defaultAgent: CreateAgentData = {
             provider: 'duckduckgo',
             max_results: 5,
         },
+        weather: {
+            enabled: false,
+            units: 'metric',
+        },
         rag: {
             enabled: false,
             collection_name: null,
@@ -38,6 +44,7 @@ const defaultAgent: CreateAgentData = {
             chunk_overlap: 200,
             top_k: 5,
         },
+        routing_keywords: [],
         tools: [],
     },
     voice_settings: {
@@ -406,6 +413,73 @@ export default function AgentEditor() {
                                 </div>
                             </div>
                         </div>
+
+                        <div className="card" style={{ gridColumn: '1 / -1' }}>
+                            <div className="card-header">
+                                <h3 className="card-title">
+                                    <Tag size={18} style={{ marginRight: 8 }} />
+                                    Routing Keywords
+                                </h3>
+                            </div>
+                            <div className="card-body">
+                                <p className="text-sm text-muted mb-4">
+                                    Define keywords that will route user queries to this agent. Press Enter to add each keyword.
+                                </p>
+
+                                <div className="form-group">
+                                    <label className="form-label">Add Keyword</label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Type keyword and press Enter..."
+                                        onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault()
+                                                const input = e.currentTarget
+                                                const keyword = input.value.trim().toLowerCase()
+                                                if (keyword && !formData.capabilities?.routing_keywords?.includes(keyword)) {
+                                                    setFormData({
+                                                        ...formData,
+                                                        capabilities: {
+                                                            ...formData.capabilities!,
+                                                            routing_keywords: [...(formData.capabilities?.routing_keywords || []), keyword]
+                                                        }
+                                                    })
+                                                    input.value = ''
+                                                }
+                                            }
+                                        }}
+                                    />
+                                    <p className="form-help">
+                                        When a user's message contains any of these keywords, it will be routed to this agent.
+                                    </p>
+                                </div>
+
+                                {(formData.capabilities?.routing_keywords || []).length > 0 && (
+                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                                        {formData.capabilities?.routing_keywords?.map((kw, i) => (
+                                            <span 
+                                                key={i} 
+                                                className="badge badge-info"
+                                                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                                                onClick={() => {
+                                                    setFormData({
+                                                        ...formData,
+                                                        capabilities: {
+                                                            ...formData.capabilities!,
+                                                            routing_keywords: formData.capabilities?.routing_keywords?.filter((_, idx) => idx !== i) || []
+                                                        }
+                                                    })
+                                                }}
+                                            >
+                                                {kw}
+                                                <span style={{ marginLeft: 4, fontWeight: 'bold' }}>×</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -476,6 +550,54 @@ export default function AgentEditor() {
                                     })}
                                     disabled={!formData.capabilities?.web_search.enabled}
                                 />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <div className="card-header">
+                            <h3 className="card-title">
+                                <CloudSun size={18} style={{ marginRight: 8 }} />
+                                Weather
+                            </h3>
+                            <label className="toggle">
+                                <input
+                                    type="checkbox"
+                                    className="toggle-input"
+                                    checked={formData.capabilities?.weather?.enabled || false}
+                                    onChange={(e) => setFormData({
+                                        ...formData,
+                                        capabilities: {
+                                            ...formData.capabilities!,
+                                            weather: { ...formData.capabilities!.weather, enabled: e.target.checked }
+                                        }
+                                    })}
+                                />
+                                <span className="toggle-switch"></span>
+                            </label>
+                        </div>
+                        <div className="card-body">
+                            <p className="text-sm text-muted mb-4">
+                                Enable the agent to get real-time weather information using OpenWeatherMap.
+                            </p>
+
+                            <div className="form-group">
+                                <label className="form-label">Temperature Units</label>
+                                <select
+                                    className="form-select"
+                                    value={formData.capabilities?.weather?.units || 'metric'}
+                                    onChange={(e) => setFormData({
+                                        ...formData,
+                                        capabilities: {
+                                            ...formData.capabilities!,
+                                            weather: { ...formData.capabilities!.weather, units: e.target.value as 'metric' | 'imperial' }
+                                        }
+                                    })}
+                                    disabled={!formData.capabilities?.weather?.enabled}
+                                >
+                                    <option value="metric">Celsius (°C)</option>
+                                    <option value="imperial">Fahrenheit (°F)</option>
+                                </select>
                             </div>
                         </div>
                     </div>

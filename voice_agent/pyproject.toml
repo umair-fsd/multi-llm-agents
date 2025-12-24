@@ -17,7 +17,7 @@ dependencies = [
     "pypdf>=3.17.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.26.0",
-    "duckduckgo-search>=4.0.0",
+    "ddgs>=6.0.0",
     "asyncpg>=0.29.0",
     "sqlalchemy>=2.0.25",
 ]

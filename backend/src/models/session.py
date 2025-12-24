@@ -30,6 +30,17 @@ class Session(Base):
     # LiveKit room info
     room_name: Mapped[str] = mapped_column(String(100), nullable=True)
     
+    # Participant info
+    participant_name: Mapped[str] = mapped_column(String(100), nullable=True)
+    
+    # Session status (active, ended)
+    status: Mapped[str] = mapped_column(
+        String(20), 
+        nullable=False, 
+        default="active",
+        server_default="active",
+    )
+    
     # Session metadata
     session_metadata: Mapped[dict[str, Any]] = mapped_column(
         JSON,
@@ -52,4 +63,4 @@ class Session(Base):
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
-        return f"<Session(id={self.id}, room={self.room_name})>"
+        return f"<Session(id={self.id}, room={self.room_name}, status={self.status})>"

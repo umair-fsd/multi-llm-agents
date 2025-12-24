@@ -23,9 +23,24 @@ DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
 # Web Search
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+def _get_tavily_key():
+    """Get Tavily API key from various sources."""
+    key = os.getenv("TAVILY_API_KEY", "")
+    # Skip placeholder values
+    if key and "your-" not in key and "xxx" not in key.lower():
+        return key
+    # Try extracting from MCP link
+    mcp_link = os.getenv("TAVILY_MCP_LINK", "")
+    if "tavilyApiKey=" in mcp_link:
+        return mcp_link.split("tavilyApiKey=")[1].split("&")[0]
+    return ""
+
+TAVILY_API_KEY = _get_tavily_key()
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
 DEFAULT_SEARCH_PROVIDER = os.getenv("DEFAULT_SEARCH_PROVIDER", "duckduckgo")
+
+# Weather
+OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY", "") or os.getenv("OPEN_WEATHER_MAP_API", "")
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/agentic_ai")

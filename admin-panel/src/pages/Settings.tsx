@@ -1,12 +1,13 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
     Database,
     Cpu,
     Globe,
     Mic,
     CheckCircle,
-    XCircle,
-    ExternalLink
+    ExternalLink,
+    Save
 } from 'lucide-react'
 import { api } from '../api/client'
 
@@ -21,6 +22,7 @@ interface SettingsResponse {
     search: {
         default_provider: string
         providers: string[]
+        api_keys_configured: Record<string, boolean>
     }
     voice: {
         tts_voices: string[]
@@ -28,16 +30,45 @@ interface SettingsResponse {
 }
 
 export default function Settings() {
+    const queryClient = useQueryClient()
+    const [selectedSearchProvider, setSelectedSearchProvider] = useState<string>('')
+
     const { data, isLoading } = useQuery({
         queryKey: ['settings'],
         queryFn: () => api.get<SettingsResponse>('/settings'),
+        onSuccess: (data) => {
+            setSelectedSearchProvider(data.search.default_provider)
+        },
     })
 
     const { data: health } = useQuery({
         queryKey: ['health'],
         queryFn: () => api.get<{ status: string; services: Record<string, string> }>('/settings/health'),
-        refetchInterval: 30000, // Refresh every 30s
+        refetchInterval: 30000,
     })
+
+    const updateSearchProviderMutation = useMutation({
+        mutationFn: (provider: string) => 
+            api.put('/settings/search-provider', { value: provider }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['settings'] })
+            alert('Search provider updated successfully!')
+        },
+        onError: (error) => {
+            alert('Failed to update: ' + (error as Error).message)
+        },
+    })
+
+    // Set initial value when data loads
+    if (data && !selectedSearchProvider) {
+        setSelectedSearchProvider(data.search.default_provider)
+    }
+
+    const handleSaveSearchProvider = () => {
+        if (selectedSearchProvider && selectedSearchProvider !== data?.search.default_provider) {
+            updateSearchProviderMutation.mutate(selectedSearchProvider)
+        }
+    }
 
     return (
         <div>
@@ -133,16 +164,57 @@ export default function Settings() {
                         ) : (
                             <>
                                 <div className="form-group">
-                                    <label className="form-label">Default Provider</label>
-                                    <div className="badge badge-info" style={{ display: 'inline-flex' }}>
-                                        {data?.search.default_provider}
+                                    <label className="form-label">Search Provider</label>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                        <select
+                                            value={selectedSearchProvider}
+                                            onChange={(e) => setSelectedSearchProvider(e.target.value)}
+                                            style={{
+                                                padding: '0.5rem 1rem',
+                                                borderRadius: '0.5rem',
+                                                border: '1px solid var(--gray-200)',
+                                                flex: 1,
+                                            }}
+                                        >
+                                            {data?.search.providers.map((p) => (
+                                                <option 
+                                                    key={p} 
+                                                    value={p}
+                                                    disabled={!data.search.api_keys_configured[p]}
+                                                >
+                                                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                                                    {!data.search.api_keys_configured[p] && ' (API key not set)'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            className="btn btn-primary"
+                                            onClick={handleSaveSearchProvider}
+                                            disabled={
+                                                updateSearchProviderMutation.isPending || 
+                                                selectedSearchProvider === data?.search.default_provider
+                                            }
+                                        >
+                                            <Save size={16} />
+                                            Save
+                                        </button>
                                     </div>
+                                    {selectedSearchProvider !== data?.search.default_provider && (
+                                        <p style={{ fontSize: '0.75rem', color: 'var(--warning)', marginTop: '0.5rem' }}>
+                                            Click Save to apply changes
+                                        </p>
+                                    )}
                                 </div>
                                 <div className="form-group">
-                                    <label className="form-label">Available Providers</label>
+                                    <label className="form-label">API Keys Status</label>
                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                                         {data?.search.providers.map((p) => (
-                                            <span key={p} className="badge badge-gray">{p}</span>
+                                            <span 
+                                                key={p} 
+                                                className={`badge ${data.search.api_keys_configured[p] ? 'badge-success' : 'badge-gray'}`}
+                                            >
+                                                {p}: {data.search.api_keys_configured[p] ? '✓ Configured' : 'Not set'}
+                                            </span>
                                         ))}
                                     </div>
                                 </div>
@@ -168,14 +240,11 @@ export default function Settings() {
                                 <div className="form-group">
                                     <label className="form-label">Available TTS Voices</label>
                                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                        {data?.voice.tts_voices.slice(0, 6).map((v) => (
+                                        {data?.voice.tts_voices.map((v) => (
                                             <span key={v} className="badge badge-gray" style={{ fontSize: '0.7rem' }}>
-                                                {v.replace('aura-', '').replace('-en', '')}
+                                                {v}
                                             </span>
                                         ))}
-                                        {(data?.voice.tts_voices.length || 0) > 6 && (
-                                            <span className="badge badge-gray">+{(data?.voice.tts_voices.length || 0) - 6} more</span>
-                                        )}
                                     </div>
                                 </div>
                             </>
