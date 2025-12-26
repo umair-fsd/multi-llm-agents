@@ -1,7 +1,9 @@
 """
-MultiAgentLLM - Optimized wrapper with fast agent routing and smart tool execution.
+MultiAgentLLM - Optimized wrapper with fast agent routing, smart tool execution,
+and PARALLEL AGENT EXECUTION for complex multi-task queries.
 """
 
+import asyncio
 import logging
 import re
 from typing import Optional
@@ -15,6 +17,7 @@ from src.tools.web_search import WebSearchTool
 from src.tools.weather import WeatherTool
 from src.tools.rag_retriever import RAGRetriever
 from src.config import GROQ_API_KEY, DEFAULT_LLM_PROVIDER, DEFAULT_LLM_MODEL
+from src.llm.parallel_orchestrator import ParallelOrchestrator, Task, TaskResult
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +94,12 @@ class MultiAgentLLM(openai_plugin.LLM):
         self._weather_tool = None
         self._rag_retrievers: dict[str, RAGRetriever] = {}  # Cache by agent_id
         self._last_tools_used: list[str] = []  # Track tools used in last call
+        self._last_agents_used: list[str] = []  # Track agents used in parallel execution
         
-        logger.info(f"MultiAgentLLM initialized with {len(agents)} agents (fast routing)")
+        # Initialize parallel orchestrator for multi-task queries
+        self._orchestrator = ParallelOrchestrator(agents, self._agent_keywords)
+        
+        logger.info(f"MultiAgentLLM initialized with {len(agents)} agents (fast routing + parallel execution)")
     
     def _needs_weather(self, user_message: str) -> bool:
         """Check if query is asking about weather."""
@@ -351,16 +358,57 @@ class MultiAgentStream(llm.LLMStream):
         return None
     
     async def _run(self) -> None:
-        """Optimized run with fast routing."""
+        """Optimized run with fast routing and PARALLEL agent execution for multi-task queries."""
         try:
-            # Reset tools tracking for this call
+            # Reset tracking for this call
             self._multi_agent_llm._last_tools_used = []
+            self._multi_agent_llm._last_agents_used = []
             
             user_message = self._multi_agent_llm._get_latest_user_message(self._chat_ctx)
             tool_context = None
             
             if user_message:
-                # Fast keyword-based routing (no API call!)
+                # Check if query needs PARALLEL agent execution (multiple distinct tasks)
+                orchestrator = self._multi_agent_llm._orchestrator
+                
+                if orchestrator.needs_parallel_execution(user_message):
+                    # ===== PARALLEL AGENT EXECUTION =====
+                    logger.info(f"🔀 Detected multi-task query, using parallel execution")
+                    
+                    # Decompose query into tasks
+                    tasks = orchestrator.decompose_query(user_message)
+                    
+                    if len(tasks) > 1:
+                        # Execute tasks in parallel
+                        results = await orchestrator.execute_parallel(
+                            tasks,
+                            self._execute_single_task,
+                        )
+                        
+                        # Track which agents were used
+                        self._multi_agent_llm._last_agents_used = orchestrator.get_all_agents_used(results)
+                        self._multi_agent_llm._last_tools_used = orchestrator.get_all_tools_used(results)
+                        
+                        # Aggregate results into combined response
+                        combined_response = orchestrator.aggregate_results(results)
+                        
+                        # Set current agent to first used (for logging)
+                        if tasks:
+                            first_agent = next((a for a in self._multi_agent_llm.agents if a['name'] == tasks[0].agent_name), self._multi_agent_llm.agents[0])
+                            self._multi_agent_llm._current_agent = AgentContext(
+                                name=first_agent['name'],
+                                id=first_agent.get('id', ''),
+                                system_prompt=first_agent['system_prompt'],
+                                model_settings=first_agent.get('model_settings', {}),
+                                capabilities=first_agent.get('capabilities', {}),
+                            )
+                        
+                        # Send combined response as streaming chunks
+                        logger.info(f"✅ Parallel execution complete: {len(results)} tasks, agents: {self._multi_agent_llm._last_agents_used}")
+                        await self._send_text_as_stream(combined_response)
+                        return
+                
+                # ===== SINGLE AGENT EXECUTION (normal path) =====
                 selected_agent = self._multi_agent_llm._fast_route(user_message)
                 
                 old_agent_name = (
@@ -376,9 +424,10 @@ class MultiAgentStream(llm.LLMStream):
                     capabilities=selected_agent.get('capabilities', {}),
                 )
                 
+                self._multi_agent_llm._last_agents_used = [selected_agent['name']]
+                
                 if old_agent_name and old_agent_name != selected_agent['name']:
                     logger.info(f"🔄 Switched: {old_agent_name} → {selected_agent['name']}")
-                    # Call registered callbacks
                     for callback in self._multi_agent_llm._on_agent_switch_callbacks:
                         try:
                             callback(old_agent_name, selected_agent['name'])
@@ -386,7 +435,6 @@ class MultiAgentStream(llm.LLMStream):
                             logger.error(f"Agent switch callback error: {e}")
                 
                 # Execute tools in PARALLEL for speed
-                import asyncio
                 capabilities = self._multi_agent_llm._current_agent.capabilities
                 agent_id = self._multi_agent_llm._current_agent.id
                 
@@ -396,24 +444,24 @@ class MultiAgentStream(llm.LLMStream):
                 needs_search = capabilities.get('web_search', {}).get('enabled', False) and self._multi_agent_llm._needs_web_search(user_message) and not needs_weather
                 
                 # Run applicable tools in parallel
-                tasks = []
+                tool_tasks = []
                 task_names = []
                 
                 if needs_rag:
-                    tasks.append(self._execute_rag(user_message, capabilities, agent_id))
+                    tool_tasks.append(self._execute_rag(user_message, capabilities, agent_id))
                     task_names.append('rag')
                 if needs_weather:
-                    tasks.append(self._execute_weather(user_message, capabilities))
+                    tool_tasks.append(self._execute_weather(user_message, capabilities))
                     task_names.append('weather')
                 if needs_search:
-                    tasks.append(self._execute_web_search(user_message, capabilities))
+                    tool_tasks.append(self._execute_web_search(user_message, capabilities))
                     task_names.append('search')
                 
                 # Execute all tools concurrently
                 tool_results = []
-                if tasks:
-                    logger.info(f"⚡ Running {len(tasks)} tools in parallel: {task_names}")
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                if tool_tasks:
+                    logger.info(f"⚡ Running {len(tool_tasks)} tools in parallel: {task_names}")
+                    results = await asyncio.gather(*tool_tasks, return_exceptions=True)
                     for r in results:
                         if r and not isinstance(r, Exception):
                             tool_results.append(r)
@@ -438,6 +486,116 @@ class MultiAgentStream(llm.LLMStream):
         except Exception as e:
             logger.error(f"Stream error: {e}")
             raise
+    
+    async def _execute_single_task(self, task: Task) -> TaskResult:
+        """Execute a single task with its assigned agent."""
+        try:
+            logger.info(f"🚀 [{task.agent_name}] Executing: {task.query[:50]}...")
+            
+            # Find the agent config
+            agent = next((a for a in self._multi_agent_llm.agents if a['name'] == task.agent_name), None)
+            if not agent:
+                return TaskResult(
+                    task=task,
+                    response="Agent not found",
+                    tools_used=[],
+                    success=False,
+                    error="Agent configuration not found",
+                )
+            
+            capabilities = agent.get('capabilities', {})
+            agent_id = agent.get('id', '')
+            tools_used = []
+            
+            # Execute applicable tools for this task
+            tool_tasks = []
+            task_names = []
+            
+            needs_rag = capabilities.get('rag', {}).get('enabled', False)
+            needs_weather = capabilities.get('weather', {}).get('enabled', False) and self._multi_agent_llm._needs_weather(task.query)
+            needs_search = capabilities.get('web_search', {}).get('enabled', False) and self._multi_agent_llm._needs_web_search(task.query) and not needs_weather
+            
+            if needs_rag:
+                tool_tasks.append(self._execute_rag(task.query, capabilities, agent_id))
+                task_names.append('rag')
+            if needs_weather:
+                tool_tasks.append(self._execute_weather(task.query, capabilities))
+                task_names.append('weather')
+            if needs_search:
+                tool_tasks.append(self._execute_web_search(task.query, capabilities))
+                task_names.append('search')
+            
+            tool_results = []
+            if tool_tasks:
+                logger.info(f"   ⚡ [{task.agent_name}] Running tools: {task_names}")
+                results = await asyncio.gather(*tool_tasks, return_exceptions=True)
+                for i, r in enumerate(results):
+                    if r and not isinstance(r, Exception):
+                        tool_results.append(r)
+                        tools_used.append(task_names[i])
+            
+            tool_context = "\n\n".join(tool_results) if tool_results else None
+            
+            # Build context for this specific task
+            task_ctx = llm.ChatContext()
+            
+            if tool_context:
+                prompt = f"""You are {agent['name']}. Answer in 1 sentence.
+
+USE THIS DATA (today's date: {__import__('datetime').date.today()}):
+{tool_context[:500]}
+
+Answer from the data above only."""
+            else:
+                prompt = f"{agent['name']}: {agent['system_prompt'][:200]}\nBe brief (1 sentence)."
+            
+            task_ctx.add_message(role="system", content=prompt)
+            task_ctx.add_message(role="user", content=task.query)
+            
+            # Call LLM for this task
+            parent_stream = openai_plugin.LLM.chat(
+                self._multi_agent_llm,
+                chat_ctx=task_ctx,
+                tools=[],
+            )
+            
+            response_chunks = []
+            async with parent_stream as stream:
+                async for chunk in stream:
+                    if hasattr(chunk, 'choices') and chunk.choices:
+                        delta = chunk.choices[0].delta
+                        if hasattr(delta, 'content') and delta.content:
+                            response_chunks.append(delta.content)
+            
+            response = "".join(response_chunks)
+            logger.info(f"   ✅ [{task.agent_name}] Response: {response[:80]}...")
+            
+            return TaskResult(
+                task=task,
+                response=response,
+                tools_used=tools_used,
+                success=True,
+            )
+            
+        except Exception as e:
+            logger.error(f"   ❌ [{task.agent_name}] Error: {e}")
+            return TaskResult(
+                task=task,
+                response="",
+                tools_used=[],
+                success=False,
+                error=str(e),
+            )
+    
+    async def _send_text_as_stream(self, text: str) -> None:
+        """Send pre-generated text as streaming chunks (for parallel execution results)."""
+        # Send as a single chunk for simplicity
+        from livekit.agents.llm import ChatChunk, Choice, ChoiceDelta
+        
+        chunk = ChatChunk(
+            choices=[Choice(delta=ChoiceDelta(content=text))]
+        )
+        self._event_ch.send_nowait(chunk)
     
     async def aclose(self) -> None:
         pass
