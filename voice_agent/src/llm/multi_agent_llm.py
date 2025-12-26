@@ -14,6 +14,7 @@ from livekit.plugins import openai as openai_plugin
 from src.tools.web_search import WebSearchTool
 from src.tools.weather import WeatherTool
 from src.tools.rag_retriever import RAGRetriever
+from src.config import GROQ_API_KEY, DEFAULT_LLM_PROVIDER, DEFAULT_LLM_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +47,40 @@ class AgentContext:
 class MultiAgentLLM(openai_plugin.LLM):
     """
     Optimized multi-agent LLM with fast routing and smart tool execution.
+    Supports multiple LLM providers: openai, groq, openrouter.
     """
     
     def __init__(
         self,
         agents: list[dict],
-        model: str = "gpt-4o-mini",
+        model: str = None,
         api_key: Optional[str] = None,
+        provider: str = None,
     ):
-        super().__init__(model=model, api_key=api_key)
+        # Determine provider and configure
+        self._provider = provider or DEFAULT_LLM_PROVIDER or "groq"
+        self._use_groq = self._provider == "groq"
+        self._use_openrouter = self._provider == "openrouter"
+        
+        # Configure base URL and model based on provider
+        base_url = None
+        if self._use_groq:
+            model = model or DEFAULT_LLM_MODEL or "llama-3.1-70b-versatile"
+            api_key = api_key or GROQ_API_KEY
+            base_url = "https://api.groq.com/openai/v1"
+            logger.info(f"🚀 Using Groq LLM: {model} (FREE tier)")
+        elif self._use_openrouter:
+            model = model or "anthropic/claude-3.5-sonnet"
+            base_url = "https://openrouter.ai/api/v1"
+            logger.info(f"🚀 Using OpenRouter LLM: {model}")
+        else:
+            model = model or "gpt-4o-mini"
+            logger.info(f"Using OpenAI LLM: {model}")
+        
+        # Initialize parent with OpenAI plugin
+        super().__init__(model=model, api_key=api_key, base_url=base_url)
         
         self.agents = agents
-        self._async_client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
         
         # Fast routing using keyword matching (no API call needed)
         self._build_keyword_routing()
