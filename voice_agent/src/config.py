@@ -16,11 +16,16 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret_min_32_chars_for_de
 # LLM Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
-DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "groq")  # Default to Groq (free)
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "llama-3.1-70b-versatile")  # Groq model
 
 # Speech Services (Deepgram)
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+
+# TTS Providers
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+DEFAULT_TTS_PROVIDER = os.getenv("DEFAULT_TTS_PROVIDER", "openai")  # openai, elevenlabs, or none
 
 # Web Search
 def _get_tavily_key():

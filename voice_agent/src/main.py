@@ -2,6 +2,7 @@
 Voice Agent Service - Main Entry Point
 
 Multi-agent voice interaction with full conversation tracking.
+Modular TTS/STT/LLM provider system configurable from admin panel.
 """
 
 import asyncio
@@ -16,7 +17,7 @@ from livekit.agents import (
     AgentSession,
     Agent,
 )
-from livekit.plugins import openai, silero, deepgram
+from livekit.plugins import silero
 
 from src.config import (
     LIVEKIT_API_KEY,
@@ -24,10 +25,15 @@ from src.config import (
     LIVEKIT_URL,
     OPENAI_API_KEY,
     DEEPGRAM_API_KEY,
+    GROQ_API_KEY,
+    OPENROUTER_API_KEY,
+    DEFAULT_LLM_PROVIDER,
+    DEFAULT_LLM_MODEL,
 )
 from src.db import agent_db_service
 from src.db.session_history import session_history_service
 from src.llm import MultiAgentLLM
+from src.providers import get_tts_provider, get_stt_provider, get_llm_provider
 
 # Configure logging
 logging.basicConfig(
@@ -101,27 +107,52 @@ async def entrypoint(ctx: JobContext):
             logger.warning("VAD not preloaded, loading now...")
             _vad = silero.VAD.load()
         
-        # Create voice components - Use Deepgram for faster STT if available
-        if DEEPGRAM_API_KEY and DEEPGRAM_API_KEY != "your-deepgram-api-key-here":
-            try:
-                stt = deepgram.STT()  # ~300ms vs OpenAI's ~500ms
-                logger.info("Using Deepgram STT (faster)")
-            except Exception as e:
-                logger.warning(f"Deepgram STT failed, falling back to OpenAI: {e}")
-                stt = openai.STT()
-                logger.info("Using OpenAI STT (fallback)")
+        # Get provider settings from database (configurable via admin panel)
+        voice_settings = await agent_db_service.get_voice_provider_settings()
+        
+        # Use database values or defaults (None values from DB should use defaults)
+        stt_provider = voice_settings.get("stt_provider") or "deepgram"
+        tts_provider = voice_settings.get("tts_provider") or "deepgram"
+        tts_voice = voice_settings.get("tts_voice") or "aura-2-andromeda-en"
+        llm_provider = voice_settings.get("llm_provider") or "groq"
+        llm_model = voice_settings.get("llm_model") or "llama-3.3-70b-versatile"
+        
+        logger.info(f"📋 Provider settings: STT={stt_provider}, TTS={tts_provider}, LLM={llm_provider}/{llm_model}")
+        
+        # Create STT using modular provider
+        stt = get_stt_provider(provider=stt_provider)
+        if not stt:
+            logger.warning(f"STT provider '{stt_provider}' failed, falling back to deepgram")
+            stt = get_stt_provider(provider="deepgram")
+            if not stt:
+                logger.warning("Deepgram STT failed, trying OpenAI")
+                stt = get_stt_provider(provider="openai")
+        logger.info(f"🎤 STT: {stt_provider}")
+        
+        # Create TTS using modular provider
+        tts_instance = get_tts_provider(provider=tts_provider, voice=tts_voice)
+        if not tts_instance:
+            logger.warning(f"TTS provider '{tts_provider}' failed, falling back to deepgram")
+            tts_instance = get_tts_provider(provider="deepgram", voice="aura-2-andromeda-en")
+            if not tts_instance:
+                logger.warning("Deepgram TTS failed, trying OpenAI")
+                tts_instance = get_tts_provider(provider="openai", voice="alloy")
+        logger.info(f"🔊 TTS: {tts_provider} ({tts_voice})")
+        
+        # Get API key for selected LLM provider
+        if llm_provider == "groq":
+            llm_api_key = GROQ_API_KEY
+        elif llm_provider == "openrouter":
+            llm_api_key = OPENROUTER_API_KEY
         else:
-            stt = openai.STT()
-            logger.info("Using OpenAI STT")
+            llm_api_key = OPENAI_API_KEY
         
-        # TTS - OpenAI with streaming
-        tts = openai.TTS(voice="alloy")  # alloy is fastest voice
-        
-        # Create MultiAgentLLM with all agents
+        # Create MultiAgentLLM with all agents and selected provider
         multi_agent_llm = MultiAgentLLM(
             agents=agents,
-            model="gpt-4o-mini",
-            api_key=OPENAI_API_KEY,
+            model=llm_model,
+            api_key=llm_api_key,
+            provider=llm_provider,
         )
         
         # Track agent switches and tools
@@ -153,7 +184,7 @@ async def entrypoint(ctx: JobContext):
             vad=_vad,
             stt=stt,
             llm=multi_agent_llm,
-            tts=tts,
+            tts=tts_instance,
         )
         
         # Event: User speech transcribed - save to DB

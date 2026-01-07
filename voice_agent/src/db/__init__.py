@@ -116,6 +116,48 @@ class AgentDBService:
                 for row in rows
             ]
 
+    async def get_llm_settings(self) -> dict:
+        """Get LLM provider and model from database settings."""
+        async with self.async_session_maker() as session:
+            # Get LLM provider
+            result = await session.execute(
+                text("SELECT value FROM app_settings WHERE key = 'llm_provider'")
+            )
+            row = result.fetchone()
+            provider = row[0] if row else None
+            
+            # Get LLM model
+            result = await session.execute(
+                text("SELECT value FROM app_settings WHERE key = 'llm_model'")
+            )
+            row = result.fetchone()
+            model = row[0] if row else None
+            
+            return {
+                "provider": provider,
+                "model": model,
+            }
+
+    async def get_voice_provider_settings(self) -> dict:
+        """Get all voice provider settings (TTS, STT, LLM) from database."""
+        async with self.async_session_maker() as session:
+            settings = {}
+            keys = [
+                "tts_provider", "tts_voice",
+                "stt_provider",
+                "llm_provider", "llm_model",
+            ]
+            
+            for key in keys:
+                result = await session.execute(
+                    text("SELECT value FROM app_settings WHERE key = :key"),
+                    {"key": key}
+                )
+                row = result.fetchone()
+                settings[key] = row[0] if row else None
+            
+            return settings
+
 
 # Singleton instance
 agent_db_service = AgentDBService()

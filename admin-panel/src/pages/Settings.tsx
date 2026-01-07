@@ -1,73 +1,259 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
     Database,
     Cpu,
     Globe,
     Mic,
+    Volume2,
     CheckCircle,
+    XCircle,
     ExternalLink,
-    Save
+    Save,
+    RefreshCw
 } from 'lucide-react'
 import { api } from '../api/client'
+
+interface ProviderInfo {
+    name: string
+    configured: boolean
+    models?: string[]
+    voices?: string[]
+}
 
 interface SettingsResponse {
     environment: string
     llm: {
         default_provider: string
         default_model: string
-        providers: string[]
-        models: Record<string, string[]>
+        providers: Record<string, ProviderInfo>
+    }
+    tts: {
+        default_provider: string
+        default_voice: string
+        providers: Record<string, ProviderInfo>
+    }
+    stt: {
+        default_provider: string
+        providers: Record<string, ProviderInfo>
     }
     search: {
         default_provider: string
-        providers: string[]
-        api_keys_configured: Record<string, boolean>
-    }
-    voice: {
-        tts_voices: string[]
+        providers: Record<string, ProviderInfo>
     }
 }
 
 export default function Settings() {
     const queryClient = useQueryClient()
-    const [selectedSearchProvider, setSelectedSearchProvider] = useState<string>('')
+    
+    // LLM state
+    const [llmProvider, setLlmProvider] = useState('')
+    const [llmModel, setLlmModel] = useState('')
+    
+    // TTS state
+    const [ttsProvider, setTtsProvider] = useState('')
+    const [ttsVoice, setTtsVoice] = useState('')
+    
+    // STT state
+    const [sttProvider, setSttProvider] = useState('')
+    
+    // Search state
+    const [searchProvider, setSearchProvider] = useState('')
 
-    const { data, isLoading } = useQuery({
+    const { data, isLoading, refetch } = useQuery({
         queryKey: ['settings'],
         queryFn: () => api.get<SettingsResponse>('/settings'),
-        onSuccess: (data) => {
-            setSelectedSearchProvider(data.search.default_provider)
-        },
     })
 
-    const { data: health } = useQuery({
+    const { data: health, refetch: refetchHealth } = useQuery({
         queryKey: ['health'],
         queryFn: () => api.get<{ status: string; services: Record<string, string> }>('/settings/health'),
         refetchInterval: 30000,
     })
 
-    const updateSearchProviderMutation = useMutation({
-        mutationFn: (provider: string) => 
-            api.put('/settings/search-provider', { value: provider }),
+    // Initialize state when data loads
+    useEffect(() => {
+        if (data) {
+            setLlmProvider(data.llm.default_provider)
+            setLlmModel(data.llm.default_model)
+            setTtsProvider(data.tts.default_provider)
+            setTtsVoice(data.tts.default_voice)
+            setSttProvider(data.stt.default_provider)
+            setSearchProvider(data.search.default_provider)
+        }
+    }, [data])
+
+    // Mutations
+    const saveSetting = useMutation({
+        mutationFn: async ({ endpoint, value }: { endpoint: string; value: string }) => {
+            return api.put(`/settings/${endpoint}`, { value })
+        },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['settings'] })
-            alert('Search provider updated successfully!')
         },
         onError: (error) => {
-            alert('Failed to update: ' + (error as Error).message)
+            alert('Failed to save: ' + (error as Error).message)
         },
     })
 
-    // Set initial value when data loads
-    if (data && !selectedSearchProvider) {
-        setSelectedSearchProvider(data.search.default_provider)
+    const handleSave = (endpoint: string, value: string, label: string) => {
+        saveSetting.mutate({ endpoint, value }, {
+            onSuccess: () => {
+                alert(`${label} updated successfully!`)
+            }
+        })
     }
 
-    const handleSaveSearchProvider = () => {
-        if (selectedSearchProvider && selectedSearchProvider !== data?.search.default_provider) {
-            updateSearchProviderMutation.mutate(selectedSearchProvider)
-        }
+    // Get available models/voices for selected provider
+    const llmModels = data?.llm.providers[llmProvider]?.models || []
+    const ttsVoices = data?.tts.providers[ttsProvider]?.voices || []
+
+    const ProviderCard = ({ 
+        title, 
+        icon: Icon, 
+        providers, 
+        selectedProvider, 
+        setSelectedProvider, 
+        selectedOption,
+        setSelectedOption,
+        optionLabel,
+        options,
+        providerEndpoint,
+        optionEndpoint,
+        defaultProvider,
+        defaultOption,
+    }: {
+        title: string
+        icon: React.ComponentType<{ size: number; style?: React.CSSProperties }>
+        providers: Record<string, ProviderInfo>
+        selectedProvider: string
+        setSelectedProvider: (v: string) => void
+        selectedOption?: string
+        setSelectedOption?: (v: string) => void
+        optionLabel?: string
+        options?: string[]
+        providerEndpoint: string
+        optionEndpoint?: string
+        defaultProvider: string
+        defaultOption?: string
+    }) => (
+        <div className="card">
+            <div className="card-header">
+                <h3 className="card-title">
+                    <Icon size={18} style={{ marginRight: 8 }} />
+                    {title}
+                </h3>
+            </div>
+            <div className="card-body">
+                {/* Provider Selection */}
+                <div className="form-group">
+                    <label className="form-label">Provider</label>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <select
+                            value={selectedProvider}
+                            onChange={(e) => {
+                                setSelectedProvider(e.target.value)
+                                // Reset option to first available
+                                if (setSelectedOption && options) {
+                                    const newOptions = providers[e.target.value]?.voices || 
+                                                       providers[e.target.value]?.models || []
+                                    if (newOptions.length > 0) {
+                                        setSelectedOption(newOptions[0])
+                                    }
+                                }
+                            }}
+                            className="form-select"
+                            style={{ flex: 1 }}
+                        >
+                            {Object.entries(providers).map(([key, info]) => (
+                                <option 
+                                    key={key} 
+                                    value={key}
+                                    disabled={!info.configured}
+                                >
+                                    {info.name}
+                                    {!info.configured && ' (not configured)'}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => handleSave(providerEndpoint, selectedProvider, title + ' Provider')}
+                            disabled={saveSetting.isPending || selectedProvider === defaultProvider}
+                        >
+                            <Save size={16} />
+                        </button>
+                    </div>
+                    {selectedProvider !== defaultProvider && (
+                        <p className="text-warning text-sm mt-1">Unsaved changes</p>
+                    )}
+                </div>
+
+                {/* Option Selection (Model/Voice) */}
+                {optionLabel && setSelectedOption && options && (
+                    <div className="form-group mt-3">
+                        <label className="form-label">{optionLabel}</label>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <select
+                                value={selectedOption}
+                                onChange={(e) => setSelectedOption(e.target.value)}
+                                className="form-select"
+                                style={{ flex: 1 }}
+                                disabled={selectedProvider !== defaultProvider}
+                            >
+                                {options.map((opt) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                            </select>
+                            {optionEndpoint && (
+                                <button
+                                    className="btn btn-primary"
+                                    onClick={() => handleSave(optionEndpoint, selectedOption!, optionLabel)}
+                                    disabled={
+                                        saveSetting.isPending || 
+                                        selectedOption === defaultOption ||
+                                        selectedProvider !== defaultProvider
+                                    }
+                                >
+                                    <Save size={16} />
+                                </button>
+                            )}
+                        </div>
+                        {selectedProvider !== defaultProvider && (
+                            <p className="text-muted text-sm mt-1">Save provider first</p>
+                        )}
+                        {selectedProvider === defaultProvider && selectedOption !== defaultOption && (
+                            <p className="text-warning text-sm mt-1">Unsaved changes</p>
+                        )}
+                    </div>
+                )}
+
+                {/* API Key Status */}
+                <div className="form-group mt-3">
+                    <label className="form-label">API Keys</label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {Object.entries(providers).map(([key, info]) => (
+                            <span 
+                                key={key} 
+                                className={`badge ${info.configured ? 'badge-success' : 'badge-gray'}`}
+                                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                            >
+                                {info.configured ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                                {key}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+
+    if (isLoading) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
+                <div className="spinner" />
+            </div>
+        )
     }
 
     return (
@@ -76,197 +262,125 @@ export default function Settings() {
                 <div>
                     <h1 className="page-title">Settings</h1>
                     <p className="page-subtitle">
-                        System configuration and service status
+                        Configure AI providers for voice, text, and search
                     </p>
                 </div>
+                <button 
+                    className="btn btn-secondary" 
+                    onClick={() => { refetch(); refetchHealth(); }}
+                >
+                    <RefreshCw size={16} />
+                    Refresh
+                </button>
             </div>
 
+            {/* Service Status */}
+            <div className="card mb-4">
+                <div className="card-header">
+                    <h3 className="card-title">
+                        <Database size={18} style={{ marginRight: 8 }} />
+                        Service Status
+                    </h3>
+                </div>
+                <div className="card-body">
+                    {health ? (
+                        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                            {Object.entries(health.services).map(([name, status]) => (
+                                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <CheckCircle size={16} style={{ color: 'var(--success)' }} />
+                                    <span style={{ textTransform: 'capitalize', fontWeight: 500 }}>{name}</span>
+                                    <span className="text-muted text-sm">({status})</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="spinner" />
+                    )}
+                </div>
+            </div>
+
+            {/* Provider Cards */}
             <div className="grid-2">
-                <div className="card">
-                    <div className="card-header">
-                        <h3 className="card-title">
-                            <Database size={18} style={{ marginRight: 8 }} />
-                            Service Status
-                        </h3>
-                    </div>
-                    <div className="card-body">
-                        {health ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                                {Object.entries(health.services).map(([name, status]) => (
-                                    <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ textTransform: 'capitalize', fontWeight: 500 }}>{name}</span>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <span className="text-sm text-muted">{status}</span>
-                                            <CheckCircle size={18} style={{ color: 'var(--success)' }} />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-                                <div className="spinner" />
-                            </div>
-                        )}
-                    </div>
-                </div>
+                {/* LLM Provider */}
+                {data && (
+                    <ProviderCard
+                        title="LLM (Language Model)"
+                        icon={Cpu}
+                        providers={data.llm.providers}
+                        selectedProvider={llmProvider}
+                        setSelectedProvider={setLlmProvider}
+                        selectedOption={llmModel}
+                        setSelectedOption={setLlmModel}
+                        optionLabel="Model"
+                        options={llmModels}
+                        providerEndpoint="llm-provider"
+                        optionEndpoint="llm-model"
+                        defaultProvider={data.llm.default_provider}
+                        defaultOption={data.llm.default_model}
+                    />
+                )}
 
-                <div className="card">
-                    <div className="card-header">
-                        <h3 className="card-title">
-                            <Cpu size={18} style={{ marginRight: 8 }} />
-                            LLM Configuration
-                        </h3>
-                    </div>
-                    <div className="card-body">
-                        {isLoading ? (
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-                                <div className="spinner" />
-                            </div>
-                        ) : (
-                            <>
-                                <div className="form-group">
-                                    <label className="form-label">Default Provider</label>
-                                    <div className="badge badge-info" style={{ display: 'inline-flex' }}>
-                                        {data?.llm.default_provider}
-                                    </div>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">Default Model</label>
-                                    <div className="badge badge-success" style={{ display: 'inline-flex' }}>
-                                        {data?.llm.default_model}
-                                    </div>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">Available Providers</label>
-                                    <div style={{ display: 'flex', gap: 8 }}>
-                                        {data?.llm.providers.map((p) => (
-                                            <span key={p} className="badge badge-gray">{p}</span>
-                                        ))}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
+                {/* TTS Provider */}
+                {data && (
+                    <ProviderCard
+                        title="TTS (Text-to-Speech)"
+                        icon={Volume2}
+                        providers={data.tts.providers}
+                        selectedProvider={ttsProvider}
+                        setSelectedProvider={setTtsProvider}
+                        selectedOption={ttsVoice}
+                        setSelectedOption={setTtsVoice}
+                        optionLabel="Voice"
+                        options={ttsVoices}
+                        providerEndpoint="tts-provider"
+                        optionEndpoint="tts-voice"
+                        defaultProvider={data.tts.default_provider}
+                        defaultOption={data.tts.default_voice}
+                    />
+                )}
 
-                <div className="card">
-                    <div className="card-header">
-                        <h3 className="card-title">
-                            <Globe size={18} style={{ marginRight: 8 }} />
-                            Web Search
-                        </h3>
-                    </div>
-                    <div className="card-body">
-                        {isLoading ? (
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-                                <div className="spinner" />
-                            </div>
-                        ) : (
-                            <>
-                                <div className="form-group">
-                                    <label className="form-label">Search Provider</label>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                        <select
-                                            value={selectedSearchProvider}
-                                            onChange={(e) => setSelectedSearchProvider(e.target.value)}
-                                            style={{
-                                                padding: '0.5rem 1rem',
-                                                borderRadius: '0.5rem',
-                                                border: '1px solid var(--gray-200)',
-                                                flex: 1,
-                                            }}
-                                        >
-                                            {data?.search.providers.map((p) => (
-                                                <option 
-                                                    key={p} 
-                                                    value={p}
-                                                    disabled={!data.search.api_keys_configured[p]}
-                                                >
-                                                    {p.charAt(0).toUpperCase() + p.slice(1)}
-                                                    {!data.search.api_keys_configured[p] && ' (API key not set)'}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            className="btn btn-primary"
-                                            onClick={handleSaveSearchProvider}
-                                            disabled={
-                                                updateSearchProviderMutation.isPending || 
-                                                selectedSearchProvider === data?.search.default_provider
-                                            }
-                                        >
-                                            <Save size={16} />
-                                            Save
-                                        </button>
-                                    </div>
-                                    {selectedSearchProvider !== data?.search.default_provider && (
-                                        <p style={{ fontSize: '0.75rem', color: 'var(--warning)', marginTop: '0.5rem' }}>
-                                            Click Save to apply changes
-                                        </p>
-                                    )}
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">API Keys Status</label>
-                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                        {data?.search.providers.map((p) => (
-                                            <span 
-                                                key={p} 
-                                                className={`badge ${data.search.api_keys_configured[p] ? 'badge-success' : 'badge-gray'}`}
-                                            >
-                                                {p}: {data.search.api_keys_configured[p] ? '✓ Configured' : 'Not set'}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
+                {/* STT Provider */}
+                {data && (
+                    <ProviderCard
+                        title="STT (Speech-to-Text)"
+                        icon={Mic}
+                        providers={data.stt.providers}
+                        selectedProvider={sttProvider}
+                        setSelectedProvider={setSttProvider}
+                        providerEndpoint="stt-provider"
+                        defaultProvider={data.stt.default_provider}
+                    />
+                )}
 
-                <div className="card">
-                    <div className="card-header">
-                        <h3 className="card-title">
-                            <Mic size={18} style={{ marginRight: 8 }} />
-                            Voice Settings
-                        </h3>
-                    </div>
-                    <div className="card-body">
-                        {isLoading ? (
-                            <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-                                <div className="spinner" />
-                            </div>
-                        ) : (
-                            <>
-                                <div className="form-group">
-                                    <label className="form-label">Available TTS Voices</label>
-                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                        {data?.voice.tts_voices.map((v) => (
-                                            <span key={v} className="badge badge-gray" style={{ fontSize: '0.7rem' }}>
-                                                {v}
-                                            </span>
-                                        ))}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
+                {/* Search Provider */}
+                {data && (
+                    <ProviderCard
+                        title="Web Search"
+                        icon={Globe}
+                        providers={data.search.providers}
+                        selectedProvider={searchProvider}
+                        setSelectedProvider={setSearchProvider}
+                        providerEndpoint="search-provider"
+                        defaultProvider={data.search.default_provider}
+                    />
+                )}
             </div>
 
+            {/* Quick Links */}
             <div className="card mt-4">
                 <div className="card-header">
                     <h3 className="card-title">Quick Links</h3>
                 </div>
                 <div className="card-body">
-                    <div style={{ display: 'flex', gap: 16 }}>
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                         <a
                             href="http://localhost:8000/docs"
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn btn-outline"
                         >
-                            <ExternalLink size={18} />
-                            API Documentation
+                            <ExternalLink size={16} />
+                            API Docs
                         </a>
                         <a
                             href="http://localhost:6333/dashboard"
@@ -274,8 +388,26 @@ export default function Settings() {
                             rel="noopener noreferrer"
                             className="btn btn-outline"
                         >
-                            <ExternalLink size={18} />
-                            Qdrant Dashboard
+                            <ExternalLink size={16} />
+                            Qdrant
+                        </a>
+                        <a
+                            href="https://console.groq.com/keys"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-outline"
+                        >
+                            <ExternalLink size={16} />
+                            Groq (FREE)
+                        </a>
+                        <a
+                            href="https://console.deepgram.com/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-outline"
+                        >
+                            <ExternalLink size={16} />
+                            Deepgram
                         </a>
                     </div>
                 </div>

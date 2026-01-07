@@ -39,12 +39,14 @@ class Settings(BaseSettings):
 
     # LLM Providers
     openai_api_key: str = ""
+    groq_api_key: str = ""
     openrouter_api_key: str = ""
-    default_llm_provider: str = "openai"
-    default_llm_model: str = "gpt-4o-mini"
+    default_llm_provider: str = "groq"  # Default to Groq (free)
+    default_llm_model: str = "llama-3.1-70b-versatile"
 
     # Speech Services
     deepgram_api_key: str = ""
+    elevenlabs_api_key: str = ""
 
     # Web Search
     tavily_api_key: str = ""
