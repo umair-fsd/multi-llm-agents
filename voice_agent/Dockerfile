@@ -2,10 +2,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies required by LiveKit
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    libglib2.0-0 \
+    libgobject-2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast package management
